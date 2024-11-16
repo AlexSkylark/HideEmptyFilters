@@ -1,0 +1,49 @@
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ignore temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*.log
+
+# Ignore compiled binaries
+*.dll
+*.exe
+*.pdb
+
+# Ignore build artifacts
+/bin/
+/obj/
+
+# Ignore IDE-specific files
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.vcxproj.user
+*.ncrunchproject
+*.ncrunchsolution
+*.resharper
+# Rider
+.idea/
+# Visual Studio Code
+.vscode/
+
+# Ignore Unity-specific files
+Library/
+Temp/
+*.csproj
+*.unityproj
+*.pidb
+*.sln
+
+# Ignore GameData folder outside the mod directory
+GameData/*
+!GameData/HideEmptyFilters/
+
+# Ignore CKAN-related metadata (if generating automatically)
+*.ckan
