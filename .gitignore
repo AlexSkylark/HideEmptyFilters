@@ -18,6 +18,9 @@ desktop.ini
 *.exe
 *.pdb
 
+# Ignore release files
+*.zip
+
 # Ignore build artifacts
 /bin/
 /obj/
