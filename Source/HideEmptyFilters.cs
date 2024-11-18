@@ -1,10 +1,11 @@
+﻿using KSP.UI.Screens;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using KSP.UI.Screens;
-using System;
-using System.Linq;
-using System.Collections.Generic;
-using System.Collections;
+using UnityEngine.Profiling;
 
 namespace HideEmptyFilters
 {
@@ -12,22 +13,35 @@ namespace HideEmptyFilters
     public class HideEmptyFilters : MonoBehaviour
     {
         int hiddenCategoriesCount = 0;
+        bool sceneLoadEventExecuted = false;
         AvailablePart currentPart;
         private Dictionary<PartCategorizer.Category, bool> previousSubcategoryStates = new Dictionary<PartCategorizer.Category, bool>();
+
         private void Start()
         {
-            GameEvents.onLevelWasLoadedGUIReady.Add(OnSceneLoad);
+            if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX)
+                GameEvents.onLevelWasLoadedGUIReady.Add(OnSceneLoad);
         }
 
         private void OnSceneLoad(GameScenes scene)
         {
-            Debug.Log($"[HideEmptyFilters] Scene loaded: { scene }");
-            if (scene == GameScenes.EDITOR)
+            if (!sceneLoadEventExecuted)
             {
-                RegisterCategoryButtonListeners();
-                UpdateCategories();
-                StartCoroutine(PollSubcategoryStates());
+                Debug.Log($"[HideEmptyFilters] Scene loaded: { scene }");
+                if (scene == GameScenes.EDITOR)
+                {
+                    RegisterCategoryButtonListeners();
+                    UpdateAllCategories();
+                    StartCoroutine(PollSubcategoryStates());
+                }
             }
+            sceneLoadEventExecuted = true;
+        }
+
+        private void OnDestroy()
+        {
+            StopAllCoroutines();
+            sceneLoadEventExecuted = false;
         }
 
         private IEnumerator PollSubcategoryStates()
@@ -81,7 +95,8 @@ namespace HideEmptyFilters
                     eventID = EventTriggerType.PointerClick
                 };
 
-                categoryEntry.callback.AddListener((eventData) => {
+                categoryEntry.callback.AddListener((eventData) =>
+                {
                     UpdateCategory(category);
                 });
 
@@ -89,7 +104,8 @@ namespace HideEmptyFilters
             }
         }
 
-        private void UpdateCategories() {
+        private void UpdateAllCategories()
+        {
 
             foreach (var category in PartCategorizer.Instance.filters)
             {
@@ -99,51 +115,67 @@ namespace HideEmptyFilters
 
         private void UpdateCategory(PartCategorizer.Category category)
         {
+            Profiler.BeginSample("HideEmptyFilters-UpdateCategory");
             hiddenCategoriesCount = 0;
 
-            try {
-
+            try
+            {
                 bool categoryHasParts = false;
 
                 foreach (var subcategory in category.subcategories)
                 {
                     bool subcategoryHasParts = false;
-                    foreach(var part in PartLoader.LoadedPartsList) {
-
+                    foreach (var part in PartLoader.LoadedPartsList)
+                    {
                         currentPart = part;
 
-                        if (part.TechRequired != null && part.TechRequired.ToUpper() != "UNRESEARCHEABLE") {
-                            try {
-                                if (subcategory.exclusionFilter.FilterCriteria(part)) {
-                                    if (ResearchAndDevelopment.GetTechnologyState(part.TechRequired) == RDTech.State.Available) {
+                        if (part.TechRequired != null && part.TechRequired.ToUpper() != "UNRESEARCHEABLE")
+                        {
+                            try
+                            {
+                                if (ResearchAndDevelopment.GetTechnologyState(part.TechRequired) == RDTech.State.Available)
+                                {
+                                    if (subcategory.exclusionFilter.FilterCriteria(part))
+                                    {
                                         categoryHasParts = true;
                                         subcategoryHasParts = true;
                                         break;
                                     }
                                 }
-                            } catch (NullReferenceException) {
+                            }
+                            catch (NullReferenceException)
+                            {
                                 continue;
                             }
                         }
                     }
 
-                    if (!subcategoryHasParts) {
+                    if (!subcategoryHasParts)
+                    {
                         subcategory.button.gameObject.SetActive(false);
                         hiddenCategoriesCount++;
                     }
                 }
 
-                if (!categoryHasParts) {
+                if (!categoryHasParts)
+                {
                     category.button.gameObject.SetActive(false);
                     hiddenCategoriesCount++;
                 }
 
                 Debug.Log($"[HideEmptyFilters] Category \"{category.button.categoryName }\" processed. Cleaned { hiddenCategoriesCount } empty filters.");
 
-            } catch (Exception ex) {
+            }
+            catch (Exception ex)
+            {
                 Debug.Log($"[HideEmptyFilters] Crashed while analyzing part \"{ currentPart.name }");
                 Debug.LogException(ex);
             }
+            finally
+            {
+                Profiler.EndSample();
+            }
+
         }
     }
 }
