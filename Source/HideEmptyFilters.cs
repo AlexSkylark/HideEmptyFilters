@@ -12,170 +12,209 @@ namespace HideEmptyFilters
     [KSPAddon(KSPAddon.Startup.EditorAny, false)]
     public class HideEmptyFilters : MonoBehaviour
     {
-        int hiddenCategoriesCount = 0;
-        bool sceneLoadEventExecuted = false;
-        AvailablePart currentPart;
-        private Dictionary<PartCategorizer.Category, bool> previousSubcategoryStates = new Dictionary<PartCategorizer.Category, bool>();
+        private List<PartCategorizerButton> buttonsToHide = new List<PartCategorizerButton>();
+        bool countUnpurchasedParts;
 
-        private void Start()
-        {
-            if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX)
-                GameEvents.onLevelWasLoadedGUIReady.Add(OnSceneLoad);
-        }
+        private Coroutine partCategorizerCoroutine;
 
-        private void OnSceneLoad(GameScenes scene)
+        private void Awake()
         {
-            if (!sceneLoadEventExecuted)
-            {
-                Debug.Log($"[HideEmptyFilters] Scene loaded: { scene }");
-                if (scene == GameScenes.EDITOR)
-                {
-                    RegisterCategoryButtonListeners();
-                    UpdateAllCategories();
-                    StartCoroutine(PollSubcategoryStates());
-                }
-            }
-            sceneLoadEventExecuted = true;
+            // Ensure this GameObject persists across scenes
+            DontDestroyOnLoad(gameObject);
+
+            // Register event handlers
+            GameEvents.onLevelWasLoadedGUIReady.Add(OnSceneLoad);
+            GameEvents.onGameSceneLoadRequested.Add(OnSceneChange);
         }
 
         private void OnDestroy()
         {
-            StopAllCoroutines();
-            sceneLoadEventExecuted = false;
+            // Cleanup when the object is destroyed
+            GameEvents.onLevelWasLoadedGUIReady.Remove(OnSceneLoad);
+            GameEvents.onGameSceneLoadRequested.Remove(OnSceneChange);
         }
 
-        private IEnumerator PollSubcategoryStates()
+        private void OnSceneLoad(GameScenes scene)
         {
-            while (true)
+            // Run initialization only in the VAB/SPH
+            if (HighLogic.LoadedSceneIsEditor)
             {
-                MonitorSubcategoryStates();
-                yield return new WaitForSeconds(0.1f); // Adjust polling interval as needed
+                Debug.Log("[HideEmptyFilters] Entering the editor. Initializing...");
+                StartToolbarCoroutine();
             }
         }
 
-        private void MonitorSubcategoryStates()
+        private void OnSceneChange(GameScenes scene)
         {
-            // Find the "Filter by Function" category
-            var filterByFunctionCategory = PartCategorizer.Instance.filters.FirstOrDefault(c => c?.button?.categoryName == "Filter by Function");
-
-            if (filterByFunctionCategory == null || filterByFunctionCategory.subcategories == null)
-                return;
-
-            // Ensure the category has a state tracker for its subcategories
-            foreach (var subcategory in filterByFunctionCategory.subcategories)
+            // Stop coroutines and clean up before leaving the editor
+            if (scene != GameScenes.EDITOR)
             {
-                if (subcategory?.button?.gameObject == null)
-                    continue;
-
-                bool isActive = subcategory.button.gameObject.activeSelf;
-
-                // Check if the state changed from false to true
-                if (previousSubcategoryStates.TryGetValue(subcategory, out bool wasActive) && !wasActive && isActive)
-                {
-                    Debug.Log($"[HideEmptyFilters] Subcategory '{subcategory.button.categoryName}' in 'Filter by Function' changed from inactive to active.");
-                    UpdateCategory(filterByFunctionCategory); // Trigger your update logic
-
-                    // No need to check further; a change was detected
-                    return;
-                }
-
-                // Update the tracked state
-                previousSubcategoryStates[subcategory] = isActive;
+                Debug.Log("[HideEmptyFilters] Leaving the editor. Cleaning up...");
+                StopAllCoroutines();
+                partCategorizerCoroutine = null;
             }
         }
 
-        private void RegisterCategoryButtonListeners()
+        private void StartToolbarCoroutine()
         {
-            // Loop through all categories in PartCategorizer
+            if (partCategorizerCoroutine == null)
+            {
+                partCategorizerCoroutine = StartCoroutine(WaitForPartCategorizer());
+            }
+        }
+
+        private IEnumerator WaitForPartCategorizer()
+        {
+            // Wait for PartCategorizer to be ready
+            while (PartCategorizer.Instance == null)
+            {
+                yield return null;
+            }
+
+            // wait 10 extra frames to be safe
+            for (int i = 0; i < 10; i++) // Adjust the number of frames if necessary
+            {
+                yield return null;
+            }
+
+            countUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<Parameters>().countUnpurchasedPartsAsUnavailable;
+
+            BuildFiltersToHide();
+            UpdateSubcategoryStates();
+            RegisterAdvancedModeToggleClickEvent();
+        }
+
+        private void RegisterAdvancedModeToggleClickEvent()
+        {
+            var smpModeToggleButton = GameObject.Find("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Left");
+            var advModeToggleButton = GameObject.Find("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Right");
+
+            EventTrigger smpModeTrigger = smpModeToggleButton.AddComponent<EventTrigger>();
+            EventTrigger advModeTrigger = advModeToggleButton.AddComponent<EventTrigger>();
+
+            EventTrigger.Entry updateEvent = new EventTrigger.Entry
+            {
+                eventID = EventTriggerType.PointerClick
+            };
+
+            updateEvent.callback.AddListener((eventData) =>
+            {
+                UpdateSubcategoryStates();
+            });
+
+            smpModeTrigger.triggers.Add(updateEvent);
+            advModeTrigger.triggers.Add(updateEvent);
             foreach (var category in PartCategorizer.Instance.filters)
             {
                 EventTrigger categoryTrigger = category.button.btnToggleGeneric.gameObject.AddComponent<EventTrigger>();
-                EventTrigger.Entry categoryEntry = new EventTrigger.Entry
-                {
-                    eventID = EventTriggerType.PointerClick
-                };
-
-                categoryEntry.callback.AddListener((eventData) =>
-                {
-                    UpdateCategory(category);
-                });
-
-                categoryTrigger.triggers.Add(categoryEntry);
+                categoryTrigger.triggers.Add(updateEvent);
             }
         }
 
-        private void UpdateAllCategories()
+        private void UpdateSubcategoryStates()
         {
+            int buttonsHidden = 0;
+            Debug.Log($"[HideEmptyFilters] Processing list of filters to hide...");
+            foreach (var button in buttonsToHide)
+            {
+                // Check if the state changed from false to true
+                if (button.gameObject.activeSelf)
+                {
+                    button.gameObject.SetActive(false);
+                    buttonsHidden++;
+                    Debug.Log($"[HideEmptyFilters] Executed hide command on (sub)category \"{button.displayCategoryName}\".");
+                }
+            }
+            Debug.Log($"[HideEmptyFilters] buttons list processed. {buttonsHidden} filters were hidden.");
+        }
+
+        private void BuildFiltersToHide()
+        {
+            Profiler.BeginSample("HideEmptyFilters-BuildList");
+
+            buttonsToHide.Clear();
 
             foreach (var category in PartCategorizer.Instance.filters)
             {
-                UpdateCategory(category);
-            }
-        }
-
-        private void UpdateCategory(PartCategorizer.Category category)
-        {
-            Profiler.BeginSample("HideEmptyFilters-UpdateCategory");
-            hiddenCategoriesCount = 0;
-
-            try
-            {
-                bool categoryHasParts = false;
-
-                foreach (var subcategory in category.subcategories)
+                Debug.Log($"[HideEmptyFilters] Processing category: {category.button.displayCategoryName}");
+                try
                 {
-                    bool subcategoryHasParts = false;
-                    foreach (var part in PartLoader.LoadedPartsList)
-                    {
-                        currentPart = part;
+                    bool categoryHasParts = false;
 
-                        if (part.TechRequired != null && part.TechRequired.ToUpper() != "UNRESEARCHEABLE")
+                    foreach (var subcategory in category.subcategories.Where(s => s != null))
+                    {
+                        Debug.Log($"[HideEmptyFilters] Processing subcategory: {category.button.displayCategoryName}");
+                        if (SubcategoryHasParts(subcategory))
                         {
-                            try
-                            {
-                                if (ResearchAndDevelopment.GetTechnologyState(part.TechRequired) == RDTech.State.Available)
-                                {
-                                    if (subcategory.exclusionFilter.FilterCriteria(part))
-                                    {
-                                        categoryHasParts = true;
-                                        subcategoryHasParts = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            catch (NullReferenceException)
-                            {
-                                continue;
-                            }
+                            // At least one subcategory has parts
+                            categoryHasParts = true;
+                            continue;
+                        }
+                        else
+                        {
+                            buttonsToHide.Add(subcategory.button);
+                            Debug.Log($"[HideEmptyFilters] Added subcategory \"{subcategory.button.displayCategoryName}\" from category \"{category.button.displayCategoryName}\" to the hiding list.");
                         }
                     }
 
-                    if (!subcategoryHasParts)
+                    // No subcategories have parts
+                    if (!categoryHasParts)
                     {
-                        subcategory.button.gameObject.SetActive(false);
-                        hiddenCategoriesCount++;
+                        buttonsToHide.Add(category.button);
+                        Debug.Log($"[HideEmptyFilters] Added category \"{category.button.displayCategoryName}\" to the hiding list.");
                     }
                 }
-
-                if (!categoryHasParts)
+                catch (Exception ex)
                 {
-                    category.button.gameObject.SetActive(false);
-                    hiddenCategoriesCount++;
+                    Debug.LogException(ex);
                 }
-
-                Debug.Log($"[HideEmptyFilters] Category \"{category.button.categoryName }\" processed. Cleaned { hiddenCategoriesCount } empty filters.");
-
+                finally
+                {
+                    Profiler.EndSample();
+                }
             }
-            catch (Exception ex)
+        }
+
+        bool SubcategoryHasParts(PartCategorizer.Category subcategory)
+        {
+            foreach (var part in PartLoader.LoadedPartsList)
             {
-                Debug.Log($"[HideEmptyFilters] Crashed while analyzing part \"{ currentPart.name }");
-                Debug.LogException(ex);
+                AvailablePart currentPart = part;
+                try
+                {
+                    if (IsPartAvailable(part)) {
+                        if (subcategory.exclusionFilter.FilterCriteria(part))
+                        {
+                            // At least one part matches the subcategory
+                            Debug.Log($"[HideEmptyFilters] Found part \"{part.name}\" in subcategory \"{subcategory.button.displayCategoryName}\"!");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.Log($"[HideEmptyFilters] ERROR! While processing part {currentPart.name} of subcategory \"{subcategory.button.displayCategoryName}\".");
+                    throw ex;
+                }
+                
             }
-            finally
+            // No parts matched the subcategory
+            return false;
+        }
+
+        bool IsPartAvailable(AvailablePart part)
+        {
+            if (ResearchAndDevelopment.GetTechnologyState(part.TechRequired) != RDTech.State.Available)
             {
-                Profiler.EndSample();
+                return false; // Part is not unlocked in the tech tree
             }
 
+            if (countUnpurchasedParts && !ResearchAndDevelopment.PartModelPurchased(part))
+            {
+                return false; // Part is unlocked but not purchased
+            }
+
+            return true; // Part is available
         }
     }
 }

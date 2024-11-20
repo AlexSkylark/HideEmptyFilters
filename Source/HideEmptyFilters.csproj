@@ -48,23 +48,23 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="HideEmptyFilters.cs" />
+    <Compile Include="Parameters.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <PostBuildEvent>echo Running debug post-build event...
-xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\KSPDebug\GameData\HideEmptyFilters\"
-xcopy /Y "$(TargetDir)$(ProjectName).pdb" "D:\KSPDebug\GameData\HideEmptyFilters\"
-        </PostBuildEvent>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PostBuildEvent>echo Running release post-build event...
-xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\KSPDebug\GameData\HideEmptyFilters\"
-        </PostBuildEvent>
-  </PropertyGroup>
   <PropertyGroup>
-    <PostBuildEvent>echo Running release post-build event...
-xcopy /Y "$(TargetDir)$(ProjectName).dll" "$(SolutionDir)\..\GameData\HideEmptyFilters\"
-</PostBuildEvent>
+    <PostBuildEvent>echo Running debug post-build event...
+
+xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\KSPDebug\GameData\HideEmptyFilters\"
+
+if exist "$(TargetDir)$(ProjectName).pdb" (
+    xcopy /Y "$(TargetDir)$(ProjectName).pdb" "D:\KSPDebug\GameData\HideEmptyFilters\"
+) else (
+    echo Target file does not exist. Skipping copy.
+)
+
+if "$(ConfigurationName)" == "Release" (
+    xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\SteamLibrary\steamapps\common\Kerbal Space Program\GameData"
+)</PostBuildEvent>
   </PropertyGroup>
 </Project>
