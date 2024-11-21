@@ -1,0 +1,15 @@
+{
+    "identifier": "HideEmptyFilters",
+    "$kref": "#/ckan/spacedock/3765",
+    "$vref": "#/ckan/ksp-avc",
+    "tags": [
+        "plugin",
+        "editor",
+        "convenience"
+    ],
+    "suggests": [
+        { "name": "CommunityCategoryKit" },
+        { "name": "FilterExtensions" },
+        { "name": "MoarFEConfigs" }
+    ]
+}
