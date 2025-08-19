@@ -1,19 +1,64 @@
-﻿using KSP.UI.Screens;
+﻿using KSP.UI;
+using KSP.UI.Screens;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.Profiling;
+using UnityEngine.UI;
 
 namespace HideEmptyFilters
 {
+    public class BlockClickWhenActive : MonoBehaviour, IPointerDownHandler, IPointerClickHandler, ICanvasRaycastFilter
+    {
+        public bool IsActive;
+
+        // 1) este método evita que o GraphicRaycaster sequer considere este alvo quando ativo
+        public bool IsRaycastLocationValid(Vector2 sp, Camera eventCamera) => !IsActive;
+
+        public void OnPointerDown(PointerEventData e)
+        {
+            if (!IsActive) return;
+            Kill(e);
+        }
+
+        public void OnPointerClick(PointerEventData e)
+        {
+            if (!IsActive) return;
+            // redundância, caso algum módulo ainda dispare click
+            Kill(e);
+        }
+
+        private static void Kill(PointerEventData e)
+        {
+            e.Use();
+            e.eligibleForClick = false;
+            e.clickCount = 0;
+            e.pointerPress = null;
+            e.rawPointerPress = null;
+            // opcional: limpa seleção pra não disparar Select/Submit
+            if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject == e.pointerPress)
+                EventSystem.current.SetSelectedGameObject(null);
+        }
+    }
+
     [KSPAddon(KSPAddon.Startup.EditorAny, false)]
     public class HideEmptyFilters : MonoBehaviour
     {
         private List<PartCategorizerButton> buttonsToHide = new List<PartCategorizerButton>();
         bool countUnpurchasedParts;
+        bool hideUnpurchasedParts;
+        List<AvailablePart> unpurchasedParts = new List<AvailablePart>();
+        bool isHidingParts = false;
+        private readonly List<BlockClickWhenActive> _categoryBlockers = new List<BlockClickWhenActive>();
+        private bool _wiredOnce;
+        private readonly HashSet<UnityEngine.Object> _wired = new HashSet<UnityEngine.Object>();
+
 
         private Coroutine partCategorizerCoroutine;
 
@@ -34,6 +79,21 @@ namespace HideEmptyFilters
             GameEvents.onGameSceneLoadRequested.Remove(OnSceneChange);
         }
 
+        void OnEnable()
+        {
+            // Dispara quando a GUI do editor sobe
+            GameEvents.onGUIEditorToolbarReady.Add(OnEditorGUIReady);
+
+            // Dispara quando entra/reinicia o editor (VAB/SPH)
+            GameEvents.onEditorStarted.Add(OnEditorStarted);
+        }
+
+        void OnDisable()
+        {
+            GameEvents.onGUIEditorToolbarReady.Remove(OnEditorGUIReady);
+            GameEvents.onEditorStarted.Remove(OnEditorStarted);
+        }
+
         private void OnSceneLoad(GameScenes scene)
         {
             // Run initialization only in the VAB/SPH
@@ -52,6 +112,230 @@ namespace HideEmptyFilters
                 Debug.Log("[HideEmptyFilters] Leaving the editor. Cleaning up...");
                 StopAllCoroutines();
                 partCategorizerCoroutine = null;
+            }
+        }       
+
+        private void OnEditorGUIReady()
+        {
+            // Dá um frame pra UI assentar e tenta armar os ganchos
+            StartCoroutine(InitWhenCategorizerReady());
+        }
+
+        private void OnEditorStarted()
+        {
+            // Mesma coisa — cobre casos de rebuild/entrada no editor
+            StartCoroutine(InitWhenCategorizerReady());
+        }
+
+        private IEnumerator InitWhenCategorizerReady()
+        {
+            // Espera até o PartCategorizer existir e ter filtros carregados
+            yield return new WaitUntil(() =>
+                PartCategorizer.Instance != null &&
+                PartCategorizer.Instance.filters != null &&
+                PartCategorizer.Instance.filters.Count > 0 &&
+                PartCategorizer.Instance.filters.TrueForAll(f => f != null && f.button != null)
+            );
+
+            // (Opcional) dá mais 1 frame pra mods terceiros terminarem de mexer
+            yield return null;
+
+            // Agora é seguro ligar tudo
+            RegisterCategoriesWithBlocking();   // <- aqui você bloqueia clique redundante na categoria ativa
+            RegisterSubcategoryClickEvent();    // <- aqui você registra os cliques das subcategorias
+            MarkInitiallyActiveCategory();
+
+            _wiredOnce = true;
+        }
+
+        private void MarkInitiallyActiveCategory()
+        {
+            if (_categoryBlockers == null || _categoryBlockers.Count == 0) return;
+
+            for (int i = 0; i < _categoryBlockers.Count; i++)
+            {
+                var blocker = _categoryBlockers[i];
+                if (blocker == null) continue;
+
+                blocker.IsActive = (i == 0); // a primeira aba começa ativa
+            }
+        }
+
+        private void RemoveEventTriggersUnder(GameObject go)
+        {
+            if (!go) return;
+            foreach (var trig in go.GetComponentsInChildren<EventTrigger>(true))
+                Destroy(trig);
+        }
+
+        // Procura o componente de UI "de verdade" dentro do PartCategorizerButton
+        private bool TryGetUiFor(PartCategorizerButton pcb, out UIRadioButton radio, out Button stdBtn)
+        {
+            radio = null;
+            stdBtn = null;
+            if (!pcb) return false;
+
+            // normalmente o UIRadioButton está no mesmo GO ou em um filho
+            radio = pcb.GetComponent<UIRadioButton>() ?? pcb.GetComponentInChildren<UIRadioButton>(true);
+            if (radio) return true;
+
+            // fallback raríssimo: um Button padrão
+            stdBtn = pcb.GetComponent<Button>() ?? pcb.GetComponentInChildren<Button>(true);
+            return stdBtn != null;
+        }
+
+        private void RegisterAdvancedModeToggleClickEvent()
+        {
+            // Setas da Top Bar – são Buttons padrão
+            HookTopBarButton("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Left");
+            HookTopBarButton("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Right");
+
+            // Categorias (cada .button é PartCategorizerButton)
+            foreach (var cat in PartCategorizer.Instance.filters)
+                WireCategoryButton(cat.button);
+        }
+
+        private void RegisterSubcategoryClickEvent()
+        {
+            foreach (var cat in PartCategorizer.Instance.filters)
+                foreach (var sub in cat.subcategories)
+                    WireSubcategoryButton(sub.button);
+        }
+
+        private void HookTopBarButton(string path)
+        {
+            var go = GameObject.Find(path);
+            if (!go) return;
+
+            RemoveEventTriggersUnder(go); // limpa EventTriggers que você criou
+
+            var btn = go.GetComponent<Button>() ?? go.GetComponentInChildren<Button>(true);
+            if (btn && !_wired.Contains(btn))
+            {
+                btn.onClick.AddListener(OnToolbarRelatedClick);
+                _wired.Add(btn);
+            }
+        }
+
+        private void WireCategoryButton(PartCategorizerButton pcb)
+        {
+            if (!TryGetUiFor(pcb, out var radio, out var stdBtn)) return;
+
+            RemoveEventTriggersUnder(pcb.gameObject);
+
+            if (radio && !_wired.Contains(radio))
+            {
+                // onClick com 3 args (varia por versão)
+                radio.onClick.AddListener((PointerEventData _e, UIRadioButton.State _s, UIRadioButton.CallType _c) =>
+                    OnToolbarRelatedClick());
+                // fallback: algumas builds também disparam onTrue(UIRadioButton)
+                radio.onTrue.AddListener((PointerEventData _e, UIRadioButton.CallType _c) => OnToolbarRelatedClick());
+                _wired.Add(radio);
+                return;
+            }
+
+            if (stdBtn && !_wired.Contains(stdBtn))
+            {
+                stdBtn.onClick.AddListener(OnToolbarRelatedClick);
+                _wired.Add(stdBtn);
+            }
+        }
+
+        private void WireSubcategoryButton(PartCategorizerButton pcb)
+        {
+            if (!TryGetUiFor(pcb, out var radio, out var stdBtn)) return;
+
+            RemoveEventTriggersUnder(pcb.gameObject);
+
+            if (radio && !_wired.Contains(radio))
+            {
+                radio.onClick.AddListener((PointerEventData _e, UIRadioButton.State _s, UIRadioButton.CallType _c) =>
+                    OnSubcategoryClicked());
+                radio.onTrue.AddListener((PointerEventData _e, UIRadioButton.CallType _c) => OnSubcategoryClicked());
+                _wired.Add(radio);
+                return;
+            }
+
+            if (stdBtn && !_wired.Contains(stdBtn))
+            {
+                stdBtn.onClick.AddListener(OnSubcategoryClicked);
+                _wired.Add(stdBtn);
+            }
+        }
+
+        private void OnToolbarRelatedClick()
+        {
+            UpdateSubcategoryStates();
+
+            if (hideUnpurchasedParts)
+            {
+                isHidingParts = true;
+                var partsRoot = GameObject
+                    .Find("_UIMaster/MainCanvas/Editor/Panel Parts List/Mode Transition/PartList Area/PartList and sorting/ListAndScrollbar/ScrollRect")
+                    .GetComponent<ScrollRect>();
+
+                TogglePartsRoot(partsRoot, false);
+                StartCoroutine(UpdateHiddenUnpurchasedParts(partsRoot));
+            }
+        }
+
+        private void OnSubcategoryClicked()
+        {
+            if (isHidingParts) return;
+            isHidingParts = true;
+
+            var partsRoot = GameObject
+                .Find("_UIMaster/MainCanvas/Editor/Panel Parts List/Mode Transition/PartList Area/PartList and sorting/ListAndScrollbar/ScrollRect")
+                .GetComponent<ScrollRect>();
+
+            TogglePartsRoot(partsRoot, false);
+            StartCoroutine(UpdateHiddenUnpurchasedParts(partsRoot));
+        }
+
+        private void RegisterCategoriesWithBlocking()
+        {
+            _categoryBlockers.Clear();
+
+            foreach (var cat in PartCategorizer.Instance.filters)
+            {
+                var pcb = cat.button;                // PartCategorizerButton (MonoBehaviour)
+                if (!pcb) continue;
+
+                // pega o UIRadioButton real dentro do botão
+                var radio = pcb.GetComponent<UIRadioButton>() ?? pcb.GetComponentInChildren<UIRadioButton>(true);
+                if (!radio) continue;
+
+                // remove EventTriggers que você tenha colocado antes (só por garantia)
+                foreach (var trig in pcb.GetComponentsInChildren<EventTrigger>(true))
+                    Destroy(trig);
+
+                // anexa (ou obtém) o bloqueador
+                var blocker = radio.gameObject.GetComponent<BlockClickWhenActive>() ??
+                              radio.gameObject.AddComponent<BlockClickWhenActive>();
+                blocker.IsActive = false; // inicializa
+
+                _categoryBlockers.Add(blocker);
+
+                // quando esta categoria vira TRUE, marca ela como ativa e desmarca as outras
+                radio.onTrue.AddListener((PointerEventData _p, UIRadioButton.CallType _c) =>
+                {
+                    for (int i = 0; i < _categoryBlockers.Count; i++)
+                        _categoryBlockers[i].IsActive = false;
+
+                    blocker.IsActive = true;
+                });
+
+                // (opcional) quando sai do TRUE, pode desmarcar
+                radio.onFalse.AddListener((PointerEventData _p, UIRadioButton.CallType _c) =>
+                {
+                    blocker.IsActive = false;
+                });
+
+                // se você já tem seu handler de "categoria clicada", mantenha-o:
+                radio.onClick.AddListener((PointerEventData _e, UIRadioButton.State _s, UIRadioButton.CallType _c) =>
+                    OnToolbarRelatedClick());
+                // e/ou:
+                radio.onTrue.AddListener((PointerEventData _p, UIRadioButton.CallType _c) => OnToolbarRelatedClick());
             }
         }
 
@@ -78,37 +362,82 @@ namespace HideEmptyFilters
             }
 
             countUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<Parameters>().countUnpurchasedPartsAsUnavailable;
+            hideUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<Parameters>().hideUnpurchasedPartsInVAB;
 
             BuildFiltersToHide();
+            
             UpdateSubcategoryStates();
             RegisterAdvancedModeToggleClickEvent();
+
+            if (hideUnpurchasedParts)
+            {
+                BuildPartsToHide();
+                RegisterSubcategoryClickEvent();
+            }
         }
 
-        private void RegisterAdvancedModeToggleClickEvent()
+        private IEnumerator UpdateHiddenUnpurchasedParts(ScrollRect partsRoot) =>
+            UpdateHiddenUnpurchasedParts(partsRoot, true);
+
+        private IEnumerator UpdateHiddenUnpurchasedParts(ScrollRect partsRoot, bool temporarilyHideRoot)
         {
-            var smpModeToggleButton = GameObject.Find("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Left");
-            var advModeToggleButton = GameObject.Find("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Right");
+            if (temporarilyHideRoot) TogglePartsRoot(partsRoot, false);
 
-            EventTrigger smpModeTrigger = smpModeToggleButton.AddComponent<EventTrigger>();
-            EventTrigger advModeTrigger = advModeToggleButton.AddComponent<EventTrigger>();
+            yield return null;
 
-            EventTrigger.Entry updateEvent = new EventTrigger.Entry
+            var partsListBase = partsRoot.gameObject.GetChild("PartGrid_Base");
+            var componentPartsList = partsListBase.GetComponentsInChildren<EditorPartIcon>().ToList();
+
+            foreach (var part in componentPartsList)
             {
-                eventID = EventTriggerType.PointerClick
-            };
-
-            updateEvent.callback.AddListener((eventData) =>
-            {
-                UpdateSubcategoryStates();
-            });
-
-            smpModeTrigger.triggers.Add(updateEvent);
-            advModeTrigger.triggers.Add(updateEvent);
-            foreach (var category in PartCategorizer.Instance.filters)
-            {
-                EventTrigger categoryTrigger = category.button.btnToggleGeneric.gameObject.AddComponent<EventTrigger>();
-                categoryTrigger.triggers.Add(updateEvent);
+                if (unpurchasedParts.Any(p => p.name == part.partInfo.name))
+                {
+                    part.gameObject.SetActive(false);
+                }
             }
+
+            // VAB Organizer is installed. Process headers.
+            foreach (var groupObj in componentPartsList.Select(p => p.transform.parent).Distinct()) {
+                bool hasActiveParts = false;
+                foreach(var partObject in groupObj.GetComponentsInChildren<EditorPartIcon>().Select(pi => pi.gameObject))
+                {
+                    if (partObject.activeSelf)
+                    {
+                        hasActiveParts = true;
+                        break;
+                    }
+                }
+
+                if (!hasActiveParts)
+                {
+                    var headerObject = groupObj.transform.parent.GetChild(groupObj.transform.GetSiblingIndex() - 1);
+                    headerObject.gameObject.SetActive(false);
+
+                    var firstHeader = groupObj.transform.parent.GetComponentInChildren<TextMeshProUGUI>();
+                    if (firstHeader != null)
+                    {
+                        yield return null;
+                        ExecuteEvents.Execute(
+                            target: firstHeader.transform.parent.gameObject,
+                            eventData: new BaseEventData(EventSystem.current),
+                            functor: ExecuteEvents.submitHandler
+                        );
+
+                        yield return null;
+                        ExecuteEvents.Execute(
+                            target: firstHeader.transform.parent.gameObject,
+                            eventData: new BaseEventData(EventSystem.current),
+                            functor: ExecuteEvents.submitHandler
+                        );
+                    }
+                }
+            }
+
+            TogglePartsRoot(partsRoot, true);
+
+            if (temporarilyHideRoot) TogglePartsRoot(partsRoot, true);
+
+            isHidingParts = false;
         }
 
         private void UpdateSubcategoryStates()
@@ -125,7 +454,7 @@ namespace HideEmptyFilters
                     Debug.Log($"[HideEmptyFilters] Executed hide command on (sub)category \"{button.displayCategoryName}\".");
                 }
             }
-            Debug.Log($"[HideEmptyFilters] buttons list processed. {buttonsHidden} filters were hidden.");
+            Debug.Log($"[HideEmptyFilters] buttons list processed. {buttonsHidden} filters were hidden.");           
         }
 
         private void BuildFiltersToHide()
@@ -175,6 +504,25 @@ namespace HideEmptyFilters
             }
         }
 
+        private void BuildPartsToHide()
+        {
+            foreach (var part in PartLoader.LoadedPartsList)
+            {
+                if (HighLogic.CurrentGame.Mode == Game.Modes.CAREER) // Only relevant in Career mode
+                {
+                    bool isPurchased =
+                        ResearchAndDevelopment.GetTechnologyState(part.TechRequired) == RDTech.State.Available && 
+                        ResearchAndDevelopment.PartModelPurchased(part);
+                    if (!isPurchased)
+                    {
+                        // Hide the part if it is not purchased
+                        Debug.Log($"[HideEmptyFilters] Adding unpurchased part to list: {part.title}");
+                        unpurchasedParts.Add(part);
+                    }
+                }
+            }
+        }
+        
         bool SubcategoryHasParts(PartCategorizer.Category subcategory)
         {
             foreach (var part in PartLoader.LoadedPartsList)
@@ -215,6 +563,41 @@ namespace HideEmptyFilters
             }
 
             return true; // Part is available
+        }
+
+        private void TogglePartsRoot(ScrollRect partsRoot, bool activate)
+        {
+            if (partsRoot == null) return;
+
+            // Garante um CanvasGroup pra controlar visibilidade/interaction sem desmontar a hierarquia
+            var cg = partsRoot.GetComponent<CanvasGroup>();
+            if (cg == null) cg = partsRoot.gameObject.AddComponent<CanvasGroup>();
+
+            if (activate)
+            {
+                cg.alpha = 1f;
+                cg.blocksRaycasts = true;
+                cg.interactable = true;
+
+                // Reabilita a rolagem
+                partsRoot.enabled = true;
+
+                // Força rebuild de layout após reativar
+                Canvas.ForceUpdateCanvases();
+                var content = partsRoot.content;
+                if (content != null)
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+            }
+            else
+            {
+                // Esconde visualmente e bloqueia cliques
+                cg.alpha = 0f;
+                cg.blocksRaycasts = false;
+                cg.interactable = false;
+
+                // Opcional: desliga a lógica de Scroll para economizar custo
+                partsRoot.enabled = false;
+            }
         }
     }
 }

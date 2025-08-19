@@ -12,6 +12,13 @@ namespace HideEmptyFilters
         autoPersistance = true)]
         public bool countUnpurchasedPartsAsUnavailable = false;
 
+        [GameParameters.CustomParameterUI(
+        "Hide Unpurchased Parts in VAB",
+        toolTip = "When this setting is enabled, unpurchased parts in Career mode will be hidden from the parts list in the VAB and SPH.",
+
+        autoPersistance = true)]
+        public bool hideUnpurchasedPartsInVAB = false;
+
         public override string Title => "Hide Empty Filters"; // Section Title
         public override GameParameters.GameMode GameMode => GameParameters.GameMode.CAREER;
         public override string Section => "Hide Empty Filters"; // Main Category
