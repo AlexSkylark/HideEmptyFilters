@@ -123,13 +123,11 @@ namespace HideEmptyFilters
 
         private void OnEditorStarted()
         {
-            // Mesma coisa — cobre casos de rebuild/entrada no editor
             StartCoroutine(InitWhenCategorizerReady());
         }
 
         private IEnumerator InitWhenCategorizerReady()
         {
-            // Espera até o PartCategorizer existir e ter filtros carregados
             yield return new WaitUntil(() =>
                 PartCategorizer.Instance != null &&
                 PartCategorizer.Instance.filters != null &&
@@ -137,12 +135,10 @@ namespace HideEmptyFilters
                 PartCategorizer.Instance.filters.TrueForAll(f => f != null && f.button != null)
             );
 
-            // (Opcional) dá mais 1 frame pra mods terceiros terminarem de mexer
             yield return null;
 
-            // Agora é seguro ligar tudo
-            RegisterCategoriesWithBlocking();   // <- aqui você bloqueia clique redundante na categoria ativa
-            RegisterSubcategoryClickEvent();    // <- aqui você registra os cliques das subcategorias
+            RegisterCategoriesWithBlocking();
+            RegisterSubcategoryClickEvent();
             MarkInitiallyActiveCategory();
 
             _wiredOnce = true;
@@ -157,7 +153,7 @@ namespace HideEmptyFilters
                 var blocker = _categoryBlockers[i];
                 if (blocker == null) continue;
 
-                blocker.IsActive = (i == 0); // a primeira aba começa ativa
+                blocker.IsActive = (i == 0); // first tab is active when scene loads
             }
         }
 
@@ -168,29 +164,24 @@ namespace HideEmptyFilters
                 Destroy(trig);
         }
 
-        // Procura o componente de UI "de verdade" dentro do PartCategorizerButton
         private bool TryGetUiFor(PartCategorizerButton pcb, out UIRadioButton radio, out Button stdBtn)
         {
             radio = null;
             stdBtn = null;
             if (!pcb) return false;
 
-            // normalmente o UIRadioButton está no mesmo GO ou em um filho
             radio = pcb.GetComponent<UIRadioButton>() ?? pcb.GetComponentInChildren<UIRadioButton>(true);
             if (radio) return true;
 
-            // fallback raríssimo: um Button padrão
             stdBtn = pcb.GetComponent<Button>() ?? pcb.GetComponentInChildren<Button>(true);
             return stdBtn != null;
         }
 
         private void RegisterAdvancedModeToggleClickEvent()
         {
-            // Setas da Top Bar – são Buttons padrão
             HookTopBarButton("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Left");
             HookTopBarButton("_UIMaster/MainCanvas/Editor/Top Bar/Button Arrow Right");
 
-            // Categorias (cada .button é PartCategorizerButton)
             foreach (var cat in PartCategorizer.Instance.filters)
                 WireCategoryButton(cat.button);
         }
@@ -207,7 +198,7 @@ namespace HideEmptyFilters
             var go = GameObject.Find(path);
             if (!go) return;
 
-            RemoveEventTriggersUnder(go); // limpa EventTriggers que você criou
+            RemoveEventTriggersUnder(go);
 
             var btn = go.GetComponent<Button>() ?? go.GetComponentInChildren<Button>(true);
             if (btn && !_wired.Contains(btn))
@@ -225,10 +216,9 @@ namespace HideEmptyFilters
 
             if (radio && !_wired.Contains(radio))
             {
-                // onClick com 3 args (varia por versão)
                 radio.onClick.AddListener((PointerEventData _e, UIRadioButton.State _s, UIRadioButton.CallType _c) =>
                     OnToolbarRelatedClick());
-                // fallback: algumas builds também disparam onTrue(UIRadioButton)
+
                 radio.onTrue.AddListener((PointerEventData _e, UIRadioButton.CallType _c) => OnToolbarRelatedClick());
                 _wired.Add(radio);
                 return;
@@ -298,25 +288,21 @@ namespace HideEmptyFilters
 
             foreach (var cat in PartCategorizer.Instance.filters)
             {
-                var pcb = cat.button;                // PartCategorizerButton (MonoBehaviour)
+                var pcb = cat.button;
                 if (!pcb) continue;
 
-                // pega o UIRadioButton real dentro do botão
                 var radio = pcb.GetComponent<UIRadioButton>() ?? pcb.GetComponentInChildren<UIRadioButton>(true);
                 if (!radio) continue;
 
-                // remove EventTriggers que você tenha colocado antes (só por garantia)
                 foreach (var trig in pcb.GetComponentsInChildren<EventTrigger>(true))
                     Destroy(trig);
 
-                // anexa (ou obtém) o bloqueador
                 var blocker = radio.gameObject.GetComponent<BlockClickWhenActive>() ??
                               radio.gameObject.AddComponent<BlockClickWhenActive>();
-                blocker.IsActive = false; // inicializa
+                blocker.IsActive = false;
 
                 _categoryBlockers.Add(blocker);
 
-                // quando esta categoria vira TRUE, marca ela como ativa e desmarca as outras
                 radio.onTrue.AddListener((PointerEventData _p, UIRadioButton.CallType _c) =>
                 {
                     for (int i = 0; i < _categoryBlockers.Count; i++)
@@ -325,16 +311,14 @@ namespace HideEmptyFilters
                     blocker.IsActive = true;
                 });
 
-                // (opcional) quando sai do TRUE, pode desmarcar
                 radio.onFalse.AddListener((PointerEventData _p, UIRadioButton.CallType _c) =>
                 {
                     blocker.IsActive = false;
                 });
 
-                // se você já tem seu handler de "categoria clicada", mantenha-o:
                 radio.onClick.AddListener((PointerEventData _e, UIRadioButton.State _s, UIRadioButton.CallType _c) =>
                     OnToolbarRelatedClick());
-                // e/ou:
+
                 radio.onTrue.AddListener((PointerEventData _p, UIRadioButton.CallType _c) => OnToolbarRelatedClick());
             }
         }
@@ -569,7 +553,6 @@ namespace HideEmptyFilters
         {
             if (partsRoot == null) return;
 
-            // Garante um CanvasGroup pra controlar visibilidade/interaction sem desmontar a hierarquia
             var cg = partsRoot.GetComponent<CanvasGroup>();
             if (cg == null) cg = partsRoot.gameObject.AddComponent<CanvasGroup>();
 
@@ -579,10 +562,8 @@ namespace HideEmptyFilters
                 cg.blocksRaycasts = true;
                 cg.interactable = true;
 
-                // Reabilita a rolagem
                 partsRoot.enabled = true;
 
-                // Força rebuild de layout após reativar
                 Canvas.ForceUpdateCanvases();
                 var content = partsRoot.content;
                 if (content != null)
@@ -590,12 +571,10 @@ namespace HideEmptyFilters
             }
             else
             {
-                // Esconde visualmente e bloqueia cliques
                 cg.alpha = 0f;
                 cg.blocksRaycasts = false;
                 cg.interactable = false;
 
-                // Opcional: desliga a lógica de Scroll para economizar custo
                 partsRoot.enabled = false;
             }
         }
