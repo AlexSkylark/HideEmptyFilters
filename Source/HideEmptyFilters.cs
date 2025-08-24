@@ -345,8 +345,8 @@ namespace HideEmptyFilters
                 yield return null;
             }
 
-            countUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<Parameters>().countUnpurchasedPartsAsUnavailable;
-            hideUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<Parameters>().hideUnpurchasedPartsInVAB;
+            countUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<HideEmptyFiltersParams>().countUnpurchasedPartsAsUnavailable;
+            hideUnpurchasedParts = HighLogic.CurrentGame.Parameters.CustomParams<HideEmptyFiltersParams>().hideUnpurchasedPartsInVAB;
 
             BuildFiltersToHide();
             
