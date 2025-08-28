@@ -370,6 +370,11 @@ namespace HideEmptyFilters
             yield return null;
 
             var partsListBase = partsRoot.gameObject.GetChild("PartGrid_Base");
+            if (partsListBase == null)
+            {
+                partsListBase = partsRoot.gameObject.GetChild("PartGrid");
+            }
+
             var componentPartsList = partsListBase.GetComponentsInChildren<EditorPartIcon>().ToList();
 
             foreach (var part in componentPartsList)
