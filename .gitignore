@@ -20,7 +20,11 @@ desktop.ini
 # Ignore build artifacts
 /Source/bin/
 /Source/obj/
+/dist/
 *.zip
+
+# Local KSP path (see KSPRoot.props.user.example)
+KSPRoot.props.user
 
 # Ignore Visual Studio files
 # User-specific files

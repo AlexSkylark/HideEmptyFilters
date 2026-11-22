@@ -1,0 +1,17 @@
+<Project>
+  <!--
+    KSPRoot points at the Kerbal Space Program install used for references and deployment.
+    Set it (in order of precedence) with:
+      1. the command line:          dotnet build -p:KSPRoot="D:\KSP\KSP-dev"
+      2. an environment variable:   KSPRoot
+      3. KSPRoot.props.user next to this file (git-ignored; see KSPRoot.props.user.example)
+    Use a dedicated development copy of KSP, never your play install.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)KSPRoot.props.user"
+          Condition="Exists('$(MSBuildThisFileDirectory)KSPRoot.props.user')" />
+
+  <PropertyGroup>
+    <KSPRoot Condition="'$(KSPRoot)' == ''">C:\PATH\TO\Kerbal Space Program</KSPRoot>
+    <KSPRoot>$([MSBuild]::EnsureTrailingSlash('$(KSPRoot)'))</KSPRoot>
+  </PropertyGroup>
+</Project>

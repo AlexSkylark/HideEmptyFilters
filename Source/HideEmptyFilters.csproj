@@ -1,74 +1,123 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{0EE4D025-6AD1-4A2A-B43D-31326D4D36CB}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>HideEmptyFilters</RootNamespace>
+    <TargetFramework>net472</TargetFramework>
     <AssemblyName>HideEmptyFilters</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <Deterministic>true</Deterministic>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
+    <RootNamespace>HideEmptyFilters</RootNamespace>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <Version>1.0.7</Version>
+    <Copyright>Copyright (c) 2024 AlexSkylark</Copyright>
+    <Authors>Alex Starlight</Authors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <DebugType>portable</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>TRACE;DEBUG;ENABLE_PROFILER</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
+
+    <!-- Mod layout. The DLL lives directly in GameData\HideEmptyFilters (no Plugins folder),
+         as in every release so far: moving it would leave a second copy behind for players
+         who upgrade by hand, and KSP would load the mod twice. -->
+    <ModName>HideEmptyFilters</ModName>
+    <ModDisplayName>Hide Empty Filters</ModDisplayName>
+    <GitHubUser>AlexSkylark</GitHubUser>
+    <GitHubRepo>HideEmptyFilters</GitHubRepo>
+    <SpaceDockId>3765</SpaceDockId>
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\'))</RepoRoot>
+    <ModSourceDir>$(RepoRoot)GameData\$(ModName)\</ModSourceDir>
+    <KSPManaged>$(KSPRoot)KSP_x64_Data\Managed\</KSPManaged>
+    <KSPModDir>$(KSPRoot)GameData\$(ModName)\</KSPModDir>
+
+    <!-- Set -p:DeployToKSP=false to skip copying into the KSP install. -->
+    <DeployToKSP Condition="'$(DeployToKSP)' == ''">true</DeployToKSP>
+    <DistDir>$(RepoRoot)dist\</DistDir>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>none</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>D:\KSPDebug\KSP_x64_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(KSPManaged)Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
     </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
     <Reference Include="UnityEngine">
-      <HintPath>D:\KSPDebug\KSP_x64_Data\Managed\UnityEngine.dll</HintPath>
+      <HintPath>$(KSPManaged)UnityEngine.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>D:\KSPDebug\KSP_x64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(KSPManaged)UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>D:\KSPDebug\KSP_x64_Data\Managed\UnityEngine.UI.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.UIModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>D:\KSPDebug\KSP_x64_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <HintPath>$(KSPManaged)UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="HideEmptyFilters.cs" />
-    <Compile Include="HideEmptyFiltersParams.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup>
-    <PostBuildEvent>echo Running debug post-build event...
 
-xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\KSPDebug\GameData\HideEmptyFilters\"
+  <!-- Fail early with a readable message when KSPRoot is wrong, and never build against
+       (or deploy into) a Steam install. -->
+  <Target Name="CheckKSPRoot" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(KSPManaged)Assembly-CSharp.dll')"
+           Text="KSP not found at '$(KSPRoot)'. Create KSPRoot.props.user (see KSPRoot.props.user.example) or pass -p:KSPRoot=..." />
+    <Error Condition="$(KSPRoot.ToLowerInvariant().Contains('steamapps'))"
+           Text="Refusing to build against a Steam install: '$(KSPRoot)'. Use a separate copy of KSP for development." />
+    <Message Importance="high" Text="$(ModName): building against KSP install at $(KSPRoot)" />
+  </Target>
 
-if exist "$(TargetDir)$(ProjectName).pdb" (
-    xcopy /Y "$(TargetDir)$(ProjectName).pdb" "D:\KSPDebug\GameData\HideEmptyFilters\"
-) else (
-    echo Target file does not exist. Skipping copy.
-)
+  <!-- Generate the KSP-AVC version file from $(Version) so the two never drift apart. -->
+  <Target Name="GenerateVersionFile" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_VMajor>$([System.Version]::Parse('$(Version)').Major)</_VMajor>
+      <_VMinor>$([System.Version]::Parse('$(Version)').Minor)</_VMinor>
+      <_VPatch>$([System.Version]::Parse('$(Version)').Build)</_VPatch>
+    </PropertyGroup>
+    <ItemGroup>
+      <_VersionLine Include="{" />
+      <_VersionLine Include="  &quot;NAME&quot;: &quot;$(ModDisplayName)&quot;," />
+      <_VersionLine Include="  &quot;URL&quot;: &quot;https://raw.githubusercontent.com/$(GitHubUser)/$(GitHubRepo)/main/GameData/$(ModName)/$(ModName).version&quot;," />
+      <_VersionLine Include="  &quot;DOWNLOAD&quot;: &quot;https://spacedock.info/mod/$(SpaceDockId)/download&quot;," />
+      <_VersionLine Include="  &quot;CHANGE_LOG_URL&quot;: &quot;https://github.com/$(GitHubUser)/$(GitHubRepo)/releases&quot;," />
+      <_VersionLine Include="  &quot;GITHUB&quot;: { &quot;USERNAME&quot;: &quot;$(GitHubUser)&quot;, &quot;REPOSITORY&quot;: &quot;$(GitHubRepo)&quot; }," />
+      <_VersionLine Include="  &quot;VERSION&quot;: { &quot;MAJOR&quot;: $(_VMajor), &quot;MINOR&quot;: $(_VMinor), &quot;PATCH&quot;: $(_VPatch), &quot;BUILD&quot;: 0 }," />
+      <_VersionLine Include="  &quot;KSP_VERSION&quot;: { &quot;MAJOR&quot;: 1, &quot;MINOR&quot;: 12, &quot;PATCH&quot;: 5 }," />
+      <_VersionLine Include="  &quot;KSP_VERSION_MIN&quot;: { &quot;MAJOR&quot;: 1, &quot;MINOR&quot;: 12, &quot;PATCH&quot;: 0 }," />
+      <_VersionLine Include="  &quot;KSP_VERSION_MAX&quot;: { &quot;MAJOR&quot;: 1, &quot;MINOR&quot;: 12, &quot;PATCH&quot;: 99 }" />
+      <_VersionLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(ModSourceDir)$(ModName).version" Lines="@(_VersionLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
 
-if "$(ConfigurationName)" == "Release" (
-    xcopy /Y "$(TargetDir)$(ProjectName).dll" "D:\SteamLibrary\steamapps\common\Kerbal Space Program\GameData"
-)</PostBuildEvent>
-  </PropertyGroup>
+  <!-- Copy the DLL (and the .pdb, for debugging) into the repo's GameData tree, then mirror
+       that tree into the KSP install. -->
+  <Target Name="DeployMod" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModSourceDir)" SkipUnchangedFiles="true" />
+    <Copy Condition="Exists('$(TargetDir)$(TargetName).pdb')" SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ModSourceDir)" SkipUnchangedFiles="true" />
+    <Delete Condition="!Exists('$(TargetDir)$(TargetName).pdb')" Files="$(ModSourceDir)$(TargetName).pdb" />
+    <ItemGroup>
+      <_ModFile Include="$(ModSourceDir)**\*" />
+      <!-- Binaries the mod owns outright; anything stale there (e.g. an old .pdb) is removed. -->
+      <_StaleFile Include="$(KSPModDir)**\*.dll;$(KSPModDir)**\*.pdb" />
+      <_StaleFile Remove="@(_ModFile->'$(KSPModDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Delete Condition="'$(DeployToKSP)' == 'true'" Files="@(_StaleFile)" />
+    <Copy Condition="'$(DeployToKSP)' == 'true'"
+          SourceFiles="@(_ModFile)"
+          DestinationFiles="@(_ModFile->'$(KSPModDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Message Condition="'$(DeployToKSP)' == 'true'" Importance="high" Text="$(ModName) -> $(KSPModDir)" />
+  </Target>
+
+  <!-- Release zip: dotnet build -c Release -t:Package  ->  dist\HideEmptyFilters-<version>.zip
+       (contains GameData\HideEmptyFilters, same layout as previous releases) -->
+  <Target Name="Package" DependsOnTargets="Build">
+    <PropertyGroup>
+      <_Stage>$(MSBuildProjectDirectory)\obj\package\</_Stage>
+      <_ZipFile>$(DistDir)$(ModName)-$(Version).zip</_ZipFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PkgFile Include="$(ModSourceDir)**\*" Exclude="$(ModSourceDir)**\*.pdb" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_Stage)" />
+    <Copy SourceFiles="@(_PkgFile)" DestinationFiles="@(_PkgFile->'$(_Stage)GameData\$(ModName)\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <MakeDir Directories="$(DistDir)" />
+    <ZipDirectory SourceDirectory="$(_Stage)" DestinationFile="$(_ZipFile)" Overwrite="true" />
+    <Message Importance="high" Text="Release package: $(_ZipFile)" />
+  </Target>
+
 </Project>

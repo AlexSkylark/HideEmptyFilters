@@ -1,0 +1,7 @@
+<Project>
+  <!-- Copy to KSPRoot.props.user and point at your KSP development install
+       (the folder that contains KSP_x64.exe and GameData). -->
+  <PropertyGroup>
+    <KSPRoot>C:\PATH\TO\Kerbal Space Program</KSPRoot>
+  </PropertyGroup>
+</Project>
