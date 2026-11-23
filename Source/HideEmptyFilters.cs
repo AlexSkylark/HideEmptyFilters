@@ -34,8 +34,21 @@ namespace HideEmptyFilters
         private readonly List<PartCategorizerButton> hiddenButtons = new List<PartCategorizerButton>();
         private readonly HashSet<PartCategorizer.Category> hiddenSet = new HashSet<PartCategorizer.Category>();
         private readonly List<HiddenSubcategory> hiddenSubcategories = new List<HiddenSubcategory>();
-        private readonly List<AvailablePart> visibleParts = new List<AvailablePart>();
+        private List<AvailablePart> visibleParts = new List<AvailablePart>();
+        private List<AvailablePart> previousVisibleParts = new List<AvailablePart>();
         private readonly HashSet<string> reportedFilterErrors = new HashSet<string>();
+
+        // Result of HasVisiblePart per subcategory. Testing every subcategory against every
+        // part is the expensive step (thousands of parts x hundreds of Filter Extensions
+        // subcategories), so results are kept for as long as the set of visible parts is
+        // unchanged and only new subcategories are tested on a structural change.
+        private sealed class CachedResult
+        {
+            public EditorPartListFilter<AvailablePart> Filter;
+            public bool HasContent;
+        }
+        private readonly Dictionary<PartCategorizer.Category, CachedResult> contentCache =
+            new Dictionary<PartCategorizer.Category, CachedResult>();
 
         private EditorPartListFilter<AvailablePart> unpurchasedFilter;
         private bool countUnpurchasedParts;
@@ -109,10 +122,13 @@ namespace HideEmptyFilters
 
             if (dirty || signature != structureSignature || excludeCount != excludeFilterCount)
             {
+                string reason = dirty ? "event"
+                              : signature != structureSignature ? "structure change"
+                              : "exclusion filter change";
                 structureSignature = signature;
                 excludeFilterCount = excludeCount;
                 dirty = false;
-                Rebuild(pc);
+                Rebuild(pc, reason);
             }
 
             EnforceHidden(pc);
@@ -122,9 +138,17 @@ namespace HideEmptyFilters
 
         #region Events
 
-        private void OnPartPurchased(AvailablePart part) => dirty = true;
+        // Events may change what a subcategory filter matches without changing the set of
+        // visible parts (e.g. a rebuilt toolbar), so they always re-test everything.
+        private void MarkDirty()
+        {
+            dirty = true;
+            contentCache.Clear();
+        }
 
-        private void OnEditorToolbarReady() => dirty = true;
+        private void OnPartPurchased(AvailablePart part) => MarkDirty();
+
+        private void OnEditorToolbarReady() => MarkDirty();
 
         private void OnGameSettingsApplied()
         {
@@ -132,7 +156,7 @@ namespace HideEmptyFilters
 
             ReadSettings();
             ApplyUnpurchasedPartsFilter();
-            dirty = true;
+            MarkDirty();
         }
 
         #endregion
@@ -192,8 +216,9 @@ namespace HideEmptyFilters
             }
         }
 
-        private void Rebuild(PartCategorizer pc)
+        private void Rebuild(PartCategorizer pc, string reason)
         {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var previouslyHidden = new List<PartCategorizerButton>(hiddenButtons);
 
             hiddenButtons.Clear();
@@ -201,9 +226,12 @@ namespace HideEmptyFilters
             hiddenSubcategories.Clear();
 
             CollectVisibleParts();
+            if (!SamePartSet(visibleParts, previousVisibleParts))
+                contentCache.Clear();
 
             int hiddenFilters = 0;
             int hiddenSubs = 0;
+            int tested = 0;
 
             foreach (var filter in pc.filters)
             {
@@ -215,7 +243,7 @@ namespace HideEmptyFilters
                 {
                     if (sub == null || sub.button == null) continue;
 
-                    if (!CanEvaluate(sub) || HasVisiblePart(sub))
+                    if (!CanEvaluate(sub) || HasVisiblePartCached(sub, ref tested))
                     {
                         filterHasContent = true;
                         continue;
@@ -243,12 +271,38 @@ namespace HideEmptyFilters
                     Restore(pc, button);
             }
 
-            Debug.Log(LogPrefix + $"Checked {pc.filters.Count} filters against {visibleParts.Count} visible parts: " +
+            Debug.Log(LogPrefix + $"Checked {pc.filters.Count} filters against {visibleParts.Count} visible parts " +
+                      $"({reason}, {tested} subcategories tested, {stopwatch.ElapsedMilliseconds} ms): " +
                       $"hiding {hiddenFilters} filters and {hiddenSubs} subcategories.");
+        }
+
+        private bool HasVisiblePartCached(PartCategorizer.Category sub, ref int tested)
+        {
+            if (contentCache.TryGetValue(sub, out var cached) && cached.Filter == sub.exclusionFilter)
+                return cached.HasContent;
+
+            tested++;
+            bool result = HasVisiblePart(sub);
+            contentCache[sub] = new CachedResult { Filter = sub.exclusionFilter, HasContent = result };
+            return result;
+        }
+
+        private static bool SamePartSet(List<AvailablePart> a, List<AvailablePart> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (!ReferenceEquals(a[i], b[i])) return false;
+            }
+            return true;
         }
 
         private void CollectVisibleParts()
         {
+            // Keep the previous list so Rebuild can tell whether cached results still hold.
+            var swap = previousVisibleParts;
+            previousVisibleParts = visibleParts;
+            visibleParts = swap;
             visibleParts.Clear();
 
             List<AvailablePart> candidates;

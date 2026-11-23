@@ -6,7 +6,7 @@
     <RootNamespace>HideEmptyFilters</RootNamespace>
     <LangVersion>8.0</LangVersion>
     <Nullable>disable</Nullable>
-    <Version>1.0.7</Version>
+    <Version>1.0.8</Version>
     <Copyright>Copyright (c) 2024 AlexSkylark</Copyright>
     <Authors>Alex Starlight</Authors>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
